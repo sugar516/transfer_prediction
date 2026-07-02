@@ -30,8 +30,7 @@ logger = logging.getLogger(__name__)
 # ==========================================
 # 定数・設定パラメータ
 # ==========================================
-BASE_URL = "https://raw.githubusercontent.com/davidcariboo/player-scores/master/data"
-TODAY = pd.Timestamp("2026-07-03")  # 2026年の基準コンテキストに固定
+BASE_URL = "https://raw.githubusercontent.com/davidcariboo/player-scores/master/data/raw"
 TOP_CANDIDATES_COUNT = 30
 TOP_DESTINATIONS_COUNT = 3
 NEGATIVE_SAMPLES_PER_PLAYER = 3
