@@ -34,28 +34,29 @@ logger = logging.getLogger(__name__)
 # 定数・設定パラメータ
 # ==========================================
 # 1. BASE_URL はリポジトリの直下までに変更します
-BASE_URL = "https://raw.githubusercontent.com/davidcariboo/player-scores/master"
+# BASE_URLの末尾に /data を指定します
+BASE_URL = "https://raw.githubusercontent.com/davidcariboo/player-scores/master/data"
 
 # ==========================================
-# 1. データ読み込み関数（正しいURLマッピング版）
+# 1. データ読み込み関数（確定URL版）
 # ==========================================
 def load_data(base_url=BASE_URL):
-    logger.info("📡 インターネット上の最新データベース(davidcariboo/player-scores)から正確なパスでロード中...")
+    logger.info("📡 インターネット上の最新データベース(davidcariboo/player-scores/data)から直接ロード中...")
     
-    # 🌟 各CSVファイルが置かれている実際のフォルダ階層を正しくマッピング
+    # 🌟 フォルダを挟まず、data直下のファイルを一発で指定
     data_files = {
-        "players": f"{base_url}/data/players/players.csv",
-        "transfers": f"{base_url}/data/transfers/transfers.csv",
-        "clubs": f"{base_url}/data/clubs/clubs.csv",
-        "appearances": f"{base_url}/data/appearances/appearances.csv",
-        "player_valuations": f"{base_url}/data/player_valuations/player_valuations.csv",
+        "players": f"{base_url}/players.csv",
+        "transfers": f"{base_url}/transfers.csv",
+        "clubs": f"{base_url}/clubs.csv",
+        "appearances": f"{base_url}/appearances.csv",
+        "player_valuations": f"{base_url}/player_valuations.csv",
     }
     
     data = {}
     for key, url in data_files.items():
         try:
-            # 🌟 timeout引数を、PandasがHTTP通信時に理解できる storage_options に修正します
-            data[key] = pd.read_csv(url, storage_options={"timeout": 30})
+            # timeoutによるエラーを避けるため、最もシンプルな指定にします
+            data[key] = pd.read_csv(url)
             logger.info(f"✅ {key}をロード完了: {len(data[key])} 行")
         except Exception as e:
             logger.error(f"❌ {key}のダウンロードに失敗 (URL: {url}): {e}")
