@@ -298,7 +298,7 @@ for row in top_candidates.itertuples(index=False):
 results_df = pd.DataFrame(results)
 results_df['to_club_name'] = results_df['to_club_id'].map(club_name_map)
 results_df = results_df[['player_name', 'p_transfer', 'to_club_name', 'p_destination_given_transfer', 'combined_score']]
-results_df.to_csv('/content/transfer_predictions.csv', index=False)
+results_df.to_csv('transfer_predictions.csv', index=False)
 
 print("\n" + "="*80)
 print(" 👑 【世界開放×格の壁モデル】統合移籍予測シミュレーション結果 👑")
