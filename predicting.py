@@ -72,9 +72,14 @@ def load_data():
 # 2. ユーティリティ・計算関数
 # ==========================================
 def calculate_age(birth_dates, ref_date=TODAY):
-    return (ref_date.year - birth_dates.dt.year) - (
-        (ref_date.month < birth_dates.dt.month)
-        | ((ref_date.month == birth_dates.dt.month) & (ref_date.day < birth_dates.dt.day))
+    # 🌟 もし ref_date が日付の「列（Series）」だった場合は、.dt をつけて年・月・日を抽出する
+    ref_year = ref_date.dt.year if isinstance(ref_date, pd.Series) else ref_date.year
+    ref_month = ref_date.dt.month if isinstance(ref_date, pd.Series) else ref_date.month
+    ref_day = ref_date.dt.day if isinstance(ref_date, pd.Series) else ref_date.day
+    
+    return (ref_year - birth_dates.dt.year) - (
+        (ref_month < birth_dates.dt.month)
+        | ((ref_month == birth_dates.dt.month) & (ref_day < birth_dates.dt.day))
     )
 
 def safe_divide(numerator, denominator, fill_value=1.0):
