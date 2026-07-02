@@ -1,4 +1,4 @@
-name: Daily Transfer Market Alert Pipeline
+name: Daily Alert
 
 on:
   schedule:
@@ -24,9 +24,9 @@ jobs:
         pip install -r requirements.txt
 
     # 🌟 エラーの原因だった working-directory を削除し、直下のファイルを直接実行
-    - name: Run Prediction Pipeline
+    - name: Run Prediction
       env:
         LINE_ACCESS_TOKEN: ${{ secrets.LINE_ACCESS_TOKEN }}
         LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
       run: |
-        python predict_pipeline.py
+        python prediction.py
