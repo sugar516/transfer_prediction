@@ -55,6 +55,7 @@ jobs:
           fi
 
       - name: Run prediction pipeline
+        working-directory: ./transfer_prediction
         run: |
           set -euxo pipefail
           python predict_pipeline.py
