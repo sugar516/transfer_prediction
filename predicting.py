@@ -31,40 +31,28 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # ==========================================
-# 定数・設定パラメータ
+# 1. データ読み込み関数（kagglehub公式ロード版）
 # ==========================================
-# 1. BASE_URL はリポジトリの直下までに変更します
-# BASE_URLの末尾に /data を指定します
-BASE_URL = "https://raw.githubusercontent.com/davidcariboo/player-scores/master/data"
+import kagglehub
 
-# ==========================================
-# 1. データ読み込み関数（確定URL版）
-# ==========================================
-# ブランチ名を master から main に修正します！
-BASE_URL = "https://raw.githubusercontent.com/davidcariboo/player-scores/main/data"
-
-# ==========================================
-# 1. データ読み込み関数
-# ==========================================
-def load_data(base_url=BASE_URL):
-    logger.info("📡 インターネット上の最新データベース(davidcariboo/player-scores/main/data)から直接ロード中...")
+def load_data():
+    logger.info("📡 kagglehubを使って、Kaggle公式から最新データを直接ロード中...")
     
-    data_files = {
-        "players": f"{base_url}/players.csv",
-        "transfers": f"{base_url}/transfers.csv",
-        "clubs": f"{base_url}/clubs.csv",
-        "appearances": f"{base_url}/appearances.csv",
-        "player_valuations": f"{base_url}/player_valuations.csv",
+    # 🌟 これだけで最新データセットがサーバー内に自動ダウンロードされ、そのフォルダパスが返ってきます
+    dataset_dir = kagglehub.dataset_download("davidcariboo/player-scores")
+    logger.info(f"💾 データセットのダウンロード先: {dataset_dir}")
+    
+    # ダウンロードされた足元のフォルダから各CSVを読み込む
+    data = {
+        "players": pd.read_csv(f"{dataset_dir}/players.csv"),
+        "transfers": pd.read_csv(f"{dataset_dir}/transfers.csv"),
+        "clubs": pd.read_csv(f"{dataset_dir}/clubs.csv"),
+        "appearances": pd.read_csv(f"{dataset_dir}/appearances.csv"),
+        "player_valuations": pd.read_csv(f"{dataset_dir}/player_valuations.csv"),
     }
     
-    data = {}
-    for key, url in data_files.items():
-        try:
-            data[key] = pd.read_csv(url)
-            logger.info(f"✅ {key}をロード完了: {len(data[key])} 行")
-        except Exception as e:
-            logger.error(f"❌ {key}のダウンロードに失敗 (URL: {url}): {e}")
-            raise
+    for key, df in data.items():
+        logger.info(f"✅ {key}をロード完了: {len(df)} 行")
 
     # 日付型の変換
     data["transfers"]["transfer_date"] = pd.to_datetime(data["transfers"]["transfer_date"])
