@@ -33,46 +33,32 @@ logger = logging.getLogger(__name__)
 # ==========================================
 # 定数・設定パラメータ
 # ==========================================
-BASE_URL = "https://raw.githubusercontent.com/davidcariboo/player-scores/master/data/raw"
-TOP_CANDIDATES_COUNT = 30
-TOP_DESTINATIONS_COUNT = 3
-NEGATIVE_SAMPLES_PER_PLAYER = 3
-RANDOM_SEED = 42
-STAGE1_ESTIMATORS = 200
-STAGE2_ESTIMATORS = 200
-SCORE_TEMPERATURE = 5
-TEST_SIZE = 0.2
+# 1. BASE_URL はリポジトリの直下までに変更します
+BASE_URL = "https://raw.githubusercontent.com/davidcariboo/player-scores/master"
 
 # ==========================================
-# 1. データ読み込み関数
+# 1. データ読み込み関数（正しいURLマッピング版）
 # ==========================================
-import urllib.request
-import pandas as pd
-import logging
-
-logger = logging.getLogger(__name__)
-
 def load_data(base_url=BASE_URL):
-    logger.info("📡 インターネット上の最新データベース(davidcariboo/player-scores)からロード中...")
+    logger.info("📡 インターネット上の最新データベース(davidcariboo/player-scores)から正確なパスでロード中...")
+    
+    # 🌟 各CSVファイルが置かれている実際のフォルダ階層を正しくマッピング
     data_files = {
-        "players": f"{base_url}/players.csv",
-        "transfers": f"{base_url}/transfers.csv",
-        "clubs": f"{base_url}/clubs.csv",
-        "appearances": f"{base_url}/appearances.csv",
-        "player_valuations": f"{base_url}/player_valuations.csv",
+        "players": f"{base_url}/data/players/players.csv",
+        "transfers": f"{base_url}/data/transfers/transfers.csv",
+        "clubs": f"{base_url}/data/clubs/clubs.csv",
+        "appearances": f"{base_url}/data/appearances/appearances.csv",
+        "player_valuations": f"{base_url}/data/player_valuations/player_valuations.csv",
     }
+    
     data = {}
     for key, url in data_files.items():
         try:
-            # pd.read_csv に timeout を渡すのではなく、urllib で timeout 指定してレスポンスを取得してから読み込む
-            with urllib.request.urlopen(url, timeout=30) as resp:
-                data[key] = pd.read_csv(resp)
+            data[key] = pd.read_csv(url, timeout=30)
             logger.info(f"✅ {key}をロード完了: {len(data[key])} 行")
         except Exception as e:
-            logger.error(f"❌ {key}のダウンロードに失敗: {e}")
+            logger.error(f"❌ {key}のダウンロードに失敗 (URL: {url}): {e}")
             raise
-    return data
-            
 
     # 日付型の変換
     data["transfers"]["transfer_date"] = pd.to_datetime(data["transfers"]["transfer_date"])
