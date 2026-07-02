@@ -30,6 +30,15 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+TOP_CANDIDATES_COUNT = 30
+TOP_DESTINATIONS_COUNT = 3
+NEGATIVE_SAMPLES_PER_PLAYER = 3
+RANDOM_SEED = 42
+STAGE1_ESTIMATORS = 200
+STAGE2_ESTIMATORS = 200
+SCORE_TEMPERATURE = 5
+TEST_SIZE = 0.2 
+
 # ==========================================
 # 1. データ読み込み関数（kagglehub公式ロード版）
 # ==========================================
