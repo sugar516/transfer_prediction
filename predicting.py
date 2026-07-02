@@ -11,7 +11,7 @@ import os
 import json
 import logging
 import warnings
-from datetime import datetime
+from datetime import datetime # 👈 これが import されているのを確認
 import lightgbm as lgb
 import numpy as np
 import pandas as pd
@@ -20,6 +20,9 @@ from sklearn.metrics import roc_auc_score
 from sklearn.model_selection import train_test_split
 
 warnings.filterwarnings("ignore")
+
+# 🌟 毎日、その日の日付を勝手に取得して更新するロジックに変更！
+TODAY = pd.Timestamp(datetime.now().date())
 
 # ロギング設定
 logging.basicConfig(
