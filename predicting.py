@@ -54,7 +54,8 @@ def load_data(base_url=BASE_URL):
     data = {}
     for key, url in data_files.items():
         try:
-            data[key] = pd.read_csv(url, timeout=30)
+            # 🌟 timeout引数を、PandasがHTTP通信時に理解できる storage_options に修正します
+            data[key] = pd.read_csv(url, storage_options={"timeout": 30})
             logger.info(f"✅ {key}をロード完了: {len(data[key])} 行")
         except Exception as e:
             logger.error(f"❌ {key}のダウンロードに失敗 (URL: {url}): {e}")
