@@ -29,4 +29,4 @@ jobs:
         LINE_ACCESS_TOKEN: ${{ secrets.LINE_ACCESS_TOKEN }}
         LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
       run: |
-        python prediction.py
+        python predicting.py
