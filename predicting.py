@@ -44,6 +44,12 @@ TEST_SIZE = 0.2
 # ==========================================
 # 1. データ読み込み関数
 # ==========================================
+import urllib.request
+import pandas as pd
+import logging
+
+logger = logging.getLogger(__name__)
+
 def load_data(base_url=BASE_URL):
     logger.info("📡 インターネット上の最新データベース(davidcariboo/player-scores)からロード中...")
     data_files = {
@@ -56,11 +62,15 @@ def load_data(base_url=BASE_URL):
     data = {}
     for key, url in data_files.items():
         try:
-            data[key] = pd.read_csv(url, timeout=30)
+            # pd.read_csv に timeout を渡すのではなく、urllib で timeout 指定してレスポンスを取得してから読み込む
+            with urllib.request.urlopen(url, timeout=30) as resp:
+                data[key] = pd.read_csv(resp)
             logger.info(f"✅ {key}をロード完了: {len(data[key])} 行")
         except Exception as e:
             logger.error(f"❌ {key}のダウンロードに失敗: {e}")
             raise
+    return data
+            
 
     # 日付型の変換
     data["transfers"]["transfer_date"] = pd.to_datetime(data["transfers"]["transfer_date"])
