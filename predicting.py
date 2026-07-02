@@ -40,10 +40,15 @@ BASE_URL = "https://raw.githubusercontent.com/davidcariboo/player-scores/master/
 # ==========================================
 # 1. データ読み込み関数（確定URL版）
 # ==========================================
+# ブランチ名を master から main に修正します！
+BASE_URL = "https://raw.githubusercontent.com/davidcariboo/player-scores/main/data"
+
+# ==========================================
+# 1. データ読み込み関数
+# ==========================================
 def load_data(base_url=BASE_URL):
-    logger.info("📡 インターネット上の最新データベース(davidcariboo/player-scores/data)から直接ロード中...")
+    logger.info("📡 インターネット上の最新データベース(davidcariboo/player-scores/main/data)から直接ロード中...")
     
-    # 🌟 フォルダを挟まず、data直下のファイルを一発で指定
     data_files = {
         "players": f"{base_url}/players.csv",
         "transfers": f"{base_url}/transfers.csv",
@@ -55,7 +60,6 @@ def load_data(base_url=BASE_URL):
     data = {}
     for key, url in data_files.items():
         try:
-            # timeoutによるエラーを避けるため、最もシンプルな指定にします
             data[key] = pd.read_csv(url)
             logger.info(f"✅ {key}をロード完了: {len(data[key])} 行")
         except Exception as e:
@@ -67,7 +71,6 @@ def load_data(base_url=BASE_URL):
     data["players"]["date_of_birth"] = pd.to_datetime(data["players"]["date_of_birth"])
     data["player_valuations"]["date"] = pd.to_datetime(data["player_valuations"]["date"])
     return data
-
 # ==========================================
 # 2. ユーティリティ・計算関数
 # ==========================================
