@@ -2,30 +2,59 @@ name: Daily Transfer Market Alert Pipeline
 
 on:
   schedule:
-    - cron: '0 22 * * *' # 毎日UTC 22:00（日本時間 朝7:00）に起動
-  workflow_dispatch: # ボタン一発で手動実行も可能にする設定
+    - cron: '0 22 * * *' # daily at 22:00 UTC (07:00 JST)
+  workflow_dispatch: {} # manual run
+
+concurrency:
+  group: daily-transfer-alert
+  cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   run-pipeline:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # Provide secrets to the job as env variables (masked)
+      LINE_ACCESS_TOKEN: ${{ secrets.LINE_ACCESS_TOKEN }}
+      LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
+      PYTHONUNBUFFERED: 1
+
     steps:
-    - name: Checkout Repository
-      uses: actions/checkout@v4
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-    - name: Set up Python
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.10'
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+          cache: 'pip' # will cache pip dependencies if supported
 
-    - name: Install Dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
+      - name: Cache pip (fallback)
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
 
-    # 🌟 LINEの秘密の鍵を、プログラムが読み込める環境変数にマッピングして実行
-    - name: Run Prediction Pipeline
-      env:
-        LINE_ACCESS_TOKEN: ${{ secrets.LINE_ACCESS_TOKEN }}
-        LINE_USER_ID: ${{ secrets.LINE_USER_ID }}
-      run: |
-        python predict_pipeline.py
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Validate required secrets
+        run: |
+          if [ -z "${LINE_ACCESS_TOKEN}" ] || [ -z "${LINE_USER_ID}" ]; then
+            echo "Required secrets are missing: set LINE_ACCESS_TOKEN and LINE_USER_ID"
+            exit 1
+          fi
+
+      - name: Run prediction pipeline
+        run: |
+          set -euxo pipefail
+          python predict_pipeline.py
