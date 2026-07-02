@@ -1,4 +1,20 @@
 # ==========================================
+# 0. データ読み込み（🌐davidcariboo版・直結ロード）
+# ==========================================
+print("📡 Kaggleの最新データベース(davidcariboo/player-scores)から直接ロード中...")
+
+# davidcariboo氏が毎日自動更新している大元リポジトリのURL
+BASE_URL = "https://raw.githubusercontent.com/davidcariboo/player-scores/master/data"
+
+players = pd.read_csv(f"{BASE_URL}/players.csv")
+transfers = pd.read_csv(f"{BASE_URL}/transfers.csv")
+clubs = pd.read_csv(f"{BASE_URL}/clubs.csv")
+appearances = pd.read_csv(f"{BASE_URL}/appearances.csv")
+player_valuations = pd.read_csv(f"{BASE_URL}/player_valuations.csv")
+
+print("✅ データのロードが完了しました！")
+
+# ==========================================
 # 3. 統合推論：【世界完全開放版】現役選手について世界中のクラブへの移籍をシミュレーション
 # ==========================================
 current_players = players[players['last_season'] >= 2025].copy()
