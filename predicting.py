@@ -361,10 +361,10 @@ def run_inference(infer_base_with_p, clubs_df, model_stage2, stage2_features, st
         return pd.DataFrame(columns=['player_name', 'p_transfer', 'to_club_name', 'p_destination_given_transfer', 'combined_score'])
 
 # ==========================================
-# 6. LINE プッシュ通知システム（テストモード版）
+# 6. LINE 定時スカウティングレポートシステム
 # ==========================================
 def run_realtime_alert_system(current_results_df, previous_results_path):
-    logger.info("⚡ LINEへのリアルタイム通知処理を開始...")
+    logger.info("📡 LINEへの定時スカウティングレポート配信処理を開始...")
 
     if current_results_df.empty:
         logger.warning("⚠️ 予測結果が空のため、通知をスキップします。")
@@ -384,34 +384,41 @@ def run_realtime_alert_system(current_results_df, previous_results_path):
         "Authorization": f"Bearer {line_access_token}",
     }
 
-    # 🌟 テスト送信モード：差分条件を一時的に取っ払い、総合スコア上位3名を強制通知！
-    alerts = current_results_df.sort_values('combined_score', ascending=False).head(3)
+    # 🌟 【ここがポイント】変な差分条件は一切挟まず、純粋に総合スコアが「今、最も高い上位3名」を抽出
+    reports = current_results_df.sort_values('combined_score', ascending=False).head(3)
 
-    for alert in alerts.itertuples():
-        message_text = (
-            f"🚨【AI移籍予兆アラート】🚨\n\n"
+    # 3名分のデータを1つのメッセージに綺麗にパッキングして、LINEのプッシュ上限（1回）に収める
+    message_text = f"📊【AI移籍市場・定時観測レポート】📊\n"
+    message_text += f"計算基準日: {TODAY.strftime('%Y-%m-%d')}\n"
+    message_text += f"----------------------------------------\n\n"
+
+    for rank, alert in enumerate(reports.itertuples(), 1):
+        message_text += (
+            f"👑 【第{rank}位】\n"
             f"👤 選手名: {alert.player_name}\n"
-            f"➡️ 移籍有力先: {alert.to_club_name}\n\n"
+            f"➡️ 移籍有力先: {alert.to_club_name}\n"
             f"📈 移籍危険度: {alert.p_transfer * 100:.1f}%\n"
             f"🎯 行き先シンクロ率: {alert.p_destination_given_transfer * 100:.1f}%\n"
-            f"🔥 総合引力スコア: {alert.combined_score:.4f}\n\n"
-            f"💡 考察: 機械学習の過学習を数理モデルで補正完了。出場機会や市場価値ギャップを加味したガチの適正引力圏内です！"
+            f"🔥 総合引力スコア: {alert.combined_score:.4f}\n"
+            f"----------------------------------------\n"
         )
+        
+    message_text += f"\n💡 考察: 本数値は出場時間・市場価値・契約残年数・個人昇格力学を数理統合した長期トレンド予測です。"
 
-        payload = {
-            "to": line_user_id,
-            "messages": [{"type": "text", "text": message_text}],
-        }
+    payload = {
+        "to": line_user_id,
+        "messages": [{"type": "text", "text": message_text}],
+    }
 
-        res = requests.post(url, headers=headers, data=json.dumps(payload))
-        if res.status_code == 200:
-            logger.info(f"✅ {alert.player_name} のリアル数値アラートをLINEに送信しました。")
-        else:
-            logger.error(f"❌ LINE送信エラー: {res.status_code} - {res.text}")
+    res = requests.post(url, headers=headers, data=json.dumps(payload))
+    if res.status_code == 200:
+        logger.info("✅ 本日の正確なスカウティングレポートをLINEに送信しました。")
+    else:
+        logger.error(f"❌ LINE送信エラー: {res.status_code} - {res.text}")
 
-    # 今日分のデータを保存
+    # 履歴保存（今後の時系列分析用）
     current_results_df.to_csv(previous_results_path, index=False)
-
+    
 # ==========================================
 # 7. メインパイプラインエントリーポイント
 # ==========================================
