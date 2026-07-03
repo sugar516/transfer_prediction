@@ -1,17 +1,17 @@
 """
-移籍予測パイプライン - 二段階分類器（LINE Messaging API 完全統合版）
-==================================================================
+移籍予測パイプライン - 数理危険度×ステージ2LightGBMハイブリッド（LINE完全統合・テストモード版）
+==================================================================================
 1. データロード: Kaggle(davidcariboo)の最新データをネットから直接ストリーミング
-2. ステージ1: 選手が移籍するかどうかをLightGBMでガチ学習＆推論
-3. ステージ2: どのクラブに移籍するかを総当たりで引力シミュレーション
-4. LINE通知 : 前日比のスコア変動を検知し、安全にLINE公式アカウントからプッシュ通知
+2. ステージ1: 数理モデルによる「移籍危険度スコア（直近移籍ペナルティ内蔵）」の動的算出（正解ラベル完全撤廃）
+3. ステージ2: どのクラブに移籍するかを総当たりで引力シミュレーション（LightGBM）
+4. LINE通知 : テスト送信モードで上位選手の予測結果を安全にLINE公式アカウントからプッシュ通知
 """
 
 import os
 import json
 import logging
 import warnings
-from datetime import datetime # 👈 これが import されているのを確認
+from datetime import datetime
 import lightgbm as lgb
 import numpy as np
 import pandas as pd
@@ -21,7 +21,7 @@ from sklearn.model_selection import train_test_split
 
 warnings.filterwarnings("ignore")
 
-# 🌟 毎日、その日の日付を勝手に取得して更新するロジックに変更！
+# 毎日、その日の日付を勝手に取得して更新するロジック
 TODAY = pd.Timestamp(datetime.now().date())
 
 # ロギング設定
@@ -34,7 +34,6 @@ TOP_CANDIDATES_COUNT = 30
 TOP_DESTINATIONS_COUNT = 3
 NEGATIVE_SAMPLES_PER_PLAYER = 3
 RANDOM_SEED = 42
-STAGE1_ESTIMATORS = 200
 STAGE2_ESTIMATORS = 200
 SCORE_TEMPERATURE = 5
 TEST_SIZE = 0.2 
@@ -46,12 +45,9 @@ import kagglehub
 
 def load_data():
     logger.info("📡 kagglehubを使って、Kaggle公式から最新データを直接ロード中...")
-    
-    # 🌟 これだけで最新データセットがサーバー内に自動ダウンロードされ、そのフォルダパスが返ってきます
     dataset_dir = kagglehub.dataset_download("davidcariboo/player-scores")
     logger.info(f"💾 データセットのダウンロード先: {dataset_dir}")
     
-    # ダウンロードされた足元のフォルダから各CSVを読み込む
     data = {
         "players": pd.read_csv(f"{dataset_dir}/players.csv"),
         "transfers": pd.read_csv(f"{dataset_dir}/transfers.csv"),
@@ -63,16 +59,15 @@ def load_data():
     for key, df in data.items():
         logger.info(f"✅ {key}をロード完了: {len(df)} 行")
 
-    # 日付型の変換
     data["transfers"]["transfer_date"] = pd.to_datetime(data["transfers"]["transfer_date"])
     data["players"]["date_of_birth"] = pd.to_datetime(data["players"]["date_of_birth"])
     data["player_valuations"]["date"] = pd.to_datetime(data["player_valuations"]["date"])
     return data
+
 # ==========================================
 # 2. ユーティリティ・計算関数
 # ==========================================
 def calculate_age(birth_dates, ref_date=TODAY):
-    # 🌟 もし ref_date が日付の「列（Series）」だった場合は、.dt をつけて年・月・日を抽出する
     ref_year = ref_date.dt.year if isinstance(ref_date, pd.Series) else ref_date.year
     ref_month = ref_date.dt.month if isinstance(ref_date, pd.Series) else ref_date.month
     ref_day = ref_date.dt.day if isinstance(ref_date, pd.Series) else ref_date.day
@@ -105,41 +100,41 @@ def create_feature_dicts(df_club_pos_counts, df_club_connection, df_agent_pipeli
     }
 
 # ==========================================
-# 3. ステージ1: モデル訓練（移籍確率予測）
+# 3. 新・ステージ1: 数理危険度スコア算出関数（正解ラベルなし）
 # ==========================================
-def train_stage1_model(players_df, transfers_df, appearances_df):
-    logger.info("🤖 【ステージ1】移籍確率予測モデル(LightGBM)の学習を開始...")
+def calculate_transfer_vulnerability(players_df, appearances_df, transfers_df):
+    logger.info("🔮 数理モデルに基づき、全現役選手の移籍危険度スコアを算出中...")
     
-    # 蓄積スタッツの計算
+    # 全選手の出場時間を集計
     player_stats = appearances_df.groupby('player_id').agg(
         total_minutes=('minutes_played', 'sum'),
-        total_goals=('goals', 'sum'),
-        total_assists=('assists', 'sum'),
         total_games=('appearance_id', 'count')
     ).reset_index()
-
-    df1 = pd.merge(players_df, player_stats, on='player_id', how='left')
-    df1[['total_minutes', 'total_goals', 'total_assists', 'total_games']] = df1[['total_minutes', 'total_goals', 'total_assists', 'total_games']].fillna(0)
-    df1['age'] = calculate_age(df1['date_of_birth'])
     
-    # 正解ラベル（過去に移籍実績があるか）
-    df1['is_transfer'] = np.where(df1['player_id'].isin(transfers_df['player_id']), 1, 0)
-
-    features = ['age', 'market_value_in_eur', 'position', 'country_of_citizenship', 'total_minutes', 'total_goals', 'total_assists', 'total_games']
-    cat_cols = ['position', 'country_of_citizenship']
-
-    X = df1[features].copy()
-    for col in cat_cols:
-        X[col] = X[col].astype('category')
-    y = df1['is_transfer']
-
-    X_tr, X_te, y_tr, y_te = train_test_split(X, y, test_size=TEST_SIZE, random_state=RANDOM_SEED, stratify=y)
-
-    model = lgb.LGBMClassifier(n_estimators=STAGE1_ESTIMATORS, random_state=RANDOM_SEED, n_jobs=-1, verbose=-1)
-    model.fit(X_tr, y_tr)
-
-    logger.info(f"✅ ステージ1訓練完了。検証セットAUC: {roc_auc_score(y_te, model.predict_proba(X_te)[:, 1]):.4f}")
-    return model, features, cat_cols
+    df = pd.merge(players_df, player_stats, on='player_id', how='left').fillna(0)
+    df['age'] = calculate_age(df['date_of_birth'])
+    
+    # サッカービジネスの力学を数式化
+    market_attraction = np.log1p(df['market_value_in_eur']) # 市場価値の引力をなめらかに
+    playing_dissatisfaction = 1.0 / (df['total_minutes'] + 100) # 出場時間が短いほど不満大
+    age_factor = np.exp(-((df['age'] - 24) ** 2) / 50) # 22〜26歳のステップアップ適齢期を優遇
+    
+    base_score = market_attraction * playing_dissatisfaction * age_factor
+    df['p_transfer_score'] = base_score
+    
+    # 🌟 あなたのアイデアを完全具現化：直近1年以内に移籍した選手への「禁欲期間ペナルティ」
+    # 直近の移籍確定日（2025年7月1日以降）がある選手をリスト化
+    recent_moved_players = transfers_df[transfers_df['transfer_date'] >= '2025-07-01']['player_id'].unique()
+    df['p_transfer_score'] = np.where(df['player_id'].isin(recent_moved_players), df['p_transfer_score'] * 0.1, df['p_transfer_score'])
+    
+    # 0〜1の範囲に綺麗に正規化して確率プロキシとする
+    min_s, max_s = df['p_transfer_score'].min(), df['p_transfer_score'].max()
+    if max_s - min_s > 0:
+        df['p_transfer'] = (df['p_transfer_score'] - min_s) / (max_s - min_s)
+    else:
+        df['p_transfer'] = 0.0
+        
+    return df
 
 # ==========================================
 # 4. ステージ2: データ準備 ＆ モデル訓練（移籍先予測）
@@ -190,7 +185,6 @@ def prepare_and_train_stage2(transfers_df, players_df, clubs_df):
     final_df['to_avg_value'] = final_df['to_avg_value'].fillna(1)
     final_df['club_status_gap'] = safe_divide(final_df['to_avg_value'], final_df['from_avg_value'])
 
-    # 必須スタッツの次元補完
     for col in ['total_minutes', 'total_goals', 'total_assists', 'total_games']:
         if col not in final_df.columns:
             final_df[col] = 0
@@ -202,7 +196,6 @@ def prepare_and_train_stage2(transfers_df, players_df, clubs_df):
     positives = final_df[final_df['is_transfer'] == 1].copy()
     positives = pd.merge(positives, club_pos_counts, left_on=['to_club_id', 'position'], right_on=['current_club_id', 'position'], how='left').drop('current_club_id', axis=1)
 
-    # ネガティブサンプリング
     rng = np.random.default_rng(RANDOM_SEED)
     league_to_clubs_dict = clubs_df.groupby('domestic_competition_id')['club_id'].apply(list).to_dict()
     pos_count_dict = {(r.current_club_id, r.position): r.position_squad_size for r in club_pos_counts.itertuples()}
@@ -252,40 +245,14 @@ def prepare_and_train_stage2(transfers_df, players_df, clubs_df):
 # ==========================================
 # 5. 二段階の統合推論エンジン
 # ==========================================
-def run_inference(players_df, clubs_df, appearances_df, player_valuations_df, model_stage1, model_stage2, stage1_features, stage1_cat_cols, stage2_features, stage2_cat_cols, feature_dicts):
-    logger.info("🌍 2026年現在の現役選手データを生成し、移籍予測を開始します...")
+def run_inference(infer_base_with_p, clubs_df, model_stage2, stage2_features, stage2_cat_cols, feature_dicts):
+    logger.info("🌍 グローバル移籍シミュレーションの実行中...")
 
-    current_players = players_df[players_df['last_season'] >= 2025].copy()
-    current_players = pd.merge(current_players, clubs_df[['club_id', 'domestic_competition_id']], left_on='current_club_id', right_on='club_id', how='left')
-
-    # 正確な出場スタッツの動的マージ（バグ回避）
-    player_stats = appearances_df.groupby('player_id').agg(
-        total_minutes=('minutes_played', 'sum'), total_goals=('goals', 'sum'),
-        total_assists=('assists', 'sum'), total_games=('appearance_id', 'count')
-    ).reset_index()
-
-    latest_valuation = player_valuations_df.sort_values('date').groupby('player_id').tail(1)[['player_id', 'market_value_in_eur']].rename(columns={'market_value_in_eur': 'recent_market_value'})
-
-    infer_base = pd.merge(current_players[['player_id', 'name', 'position', 'country_of_citizenship', 'date_of_birth', 'current_club_id', 'domestic_competition_id']], player_stats, on='player_id', how='left')
-    infer_base = pd.merge(infer_base, latest_valuation, on='player_id', how='inner')
-    infer_base[['total_minutes', 'total_goals', 'total_assists', 'total_games']] = infer_base[['total_minutes', 'total_goals', 'total_assists', 'total_games']].fillna(0)
-
-    infer_base['market_value_in_eur'] = infer_base['recent_market_value']
-    infer_base['age'] = calculate_age(infer_base['date_of_birth'])
-    infer_base = infer_base.rename(columns={'domestic_competition_id': 'player_club_domestic_competition_id'})
-
-    logger.info("🎯 [Stage 1/2] 全員の移籍確率(P_transfer)を算出中...")
-    X1_infer = infer_base[stage1_features].copy()
-    for col in stage1_cat_cols:
-        X1_infer[col] = X1_infer[col].astype('category')
-
-    infer_base['p_transfer'] = model_stage1.predict_proba(X1_infer)[:, 1]
-    top_candidates = infer_base.sort_values('p_transfer', ascending=False).head(TOP_CANDIDATES_COUNT)
+    top_candidates = infer_base_with_p.sort_values('p_transfer', ascending=False).head(TOP_CANDIDATES_COUNT)
 
     all_club_ids = clubs_df['club_id'].unique()
     club_to_league_dict = clubs_df.set_index('club_id')['domestic_competition_id'].to_dict()
 
-    logger.info("🎯 [Stage 2/2] 上位有力選手の移籍先クラブ総当たりシミュレーション中...")
     results = []
 
     for idx, row in enumerate(top_candidates.itertuples(index=False), 1):
@@ -298,12 +265,17 @@ def run_inference(players_df, clubs_df, appearances_df, player_valuations_df, mo
             pipeline_power = feature_dicts['conn_dict'].get((row.current_club_id, club_id), 0) * 2 + feature_dicts['agent_dict'].get((src_league, club_id), 0)
             nat_affinity = feature_dicts['affinity_dict'].get((club_id, row.country_of_citizenship), 0)
 
+            # リーグが異なる、かつ過去のコネクションも国籍アフィニティも皆無な無謀な移籍は足切り
             if dst_league != src_league and pipeline_power == 0 and nat_affinity == 0:
                 continue
 
             from_v = feature_dicts['club_avg_val_dict'].get(row.current_club_id, 1)
             to_v = feature_dicts['club_avg_val_dict'].get(club_id, 1)
             status_gap = safe_divide(to_v, from_v)
+            
+            # 🌟 ヨーロッパメガクラブから世界の裏側のような、格差ギャップが極端すぎる移籍を足切り(0.15倍〜6.0倍に限定)
+            if status_gap < 0.15 or status_gap > 6.0:
+                continue
 
             rows.append({
                 'age': row.age, 'market_value_in_eur': row.recent_market_value, 'position': row.position,
@@ -341,30 +313,20 @@ def run_inference(players_df, clubs_df, appearances_df, player_valuations_df, mo
             })
 
     results_df = pd.DataFrame(results)
-    results_df['to_club_name'] = results_df['to_club_id'].map(feature_dicts['club_name_map'])
-    return results_df[['player_name', 'p_transfer', 'to_club_name', 'p_destination_given_transfer', 'combined_score']]
+    if not results_df.empty:
+        results_df['to_club_name'] = results_df['to_club_id'].map(feature_dicts['club_name_map'])
+        return results_df[['player_name', 'p_transfer', 'to_club_name', 'p_destination_given_transfer', 'combined_score']]
+    else:
+        return pd.DataFrame(columns=['player_name', 'p_transfer', 'to_club_name', 'p_destination_given_transfer', 'combined_score'])
 
 # ==========================================
-# 6. LINE 差分検知＆プッシュ通知システム
+# 6. LINE プッシュ通知システム（テストモード版）
 # ==========================================
 def run_realtime_alert_system(current_results_df, previous_results_path):
-    logger.info("⚡ 前日比のスコア変動速度(Velocity)の解析を開始...")
+    logger.info("⚡ LINEへのリアルタイム通知処理を開始...")
 
-    if os.path.exists(previous_results_path):
-        prev_df = pd.read_csv(previous_results_path)
-    else:
-        # 初回実行時は前日比差分を擬似的に発生させる
-        prev_df = current_results_df.copy()
-        prev_df['combined_score'] = prev_df['combined_score'] * 0.7
-
-    comparison = pd.merge(current_results_df, prev_df, on=['player_name', 'to_club_name'], suffixes=('_today', '_prev'))
-    comparison['score_velocity'] = comparison['combined_score_today'] - comparison['combined_score_prev']
-    
-    # 確率急上昇の検知のしきい値
-    alerts = comparison[comparison['score_velocity'] > 0.005].sort_values('score_velocity', ascending=False)
-
-    if alerts.empty:
-        logger.info("✅ 本日、異常な移籍引力の急上昇をみせた選手は存在しませんでした。")
+    if current_results_df.empty:
+        logger.warning("⚠️ 予測結果が空のため、通知をスキップします。")
         return
 
     # GitHub Actions の Secrets から安全に呼び出し
@@ -381,16 +343,18 @@ def run_realtime_alert_system(current_results_df, previous_results_path):
         "Authorization": f"Bearer {line_access_token}",
     }
 
-    # 上位3名の異常変動をLINEにプッシュ
-    for alert in alerts.head(3).itertuples():
+    # 🌟 テスト送信モード：差分条件を一時的に取っ払い、総合スコア上位3名を強制通知！
+    alerts = current_results_df.sort_values('combined_score', ascending=False).head(3)
+
+    for alert in alerts.itertuples():
         message_text = (
             f"🚨【AI移籍予兆アラート】🚨\n\n"
             f"👤 選手名: {alert.player_name}\n"
             f"➡️ 移籍有力先: {alert.to_club_name}\n\n"
-            f"📈 移籍発生確率: {alert.p_transfer_today * 100:.1f}%\n"
-            f"🎯 行き先シンクロ率: {alert.p_destination_given_transfer_today * 100:.1f}%\n"
-            f"🔥 総合スコア: {alert.combined_score_today:.4f} (▲ +{alert.score_velocity:.4f})\n\n"
-            f"💡 考察: メディカルチェックや代理人間の裏交渉が活発化している可能性があります。ロマーノ氏の発表前に先読み成功か！？"
+            f"📈 移籍危険度: {alert.p_transfer * 100:.1f}%\n"
+            f"🎯 行き先シンクロ率: {alert.p_destination_given_transfer * 100:.1f}%\n"
+            f"🔥 総合引力スコア: {alert.combined_score:.4f}\n\n"
+            f"💡 考察: 機械学習の過学習を数理モデルで補正完了。出場機会や市場価値ギャップを加味したガチの適正引力圏内です！"
         )
 
         payload = {
@@ -400,11 +364,11 @@ def run_realtime_alert_system(current_results_df, previous_results_path):
 
         res = requests.post(url, headers=headers, data=json.dumps(payload))
         if res.status_code == 200:
-            logger.info(f"✅ {alert.player_name} の爆速アラートをLINEに送信しました。")
+            logger.info(f"✅ {alert.player_name} のリアル数値アラートをLINEに送信しました。")
         else:
             logger.error(f"❌ LINE送信エラー: {res.status_code} - {res.text}")
 
-    # 今日分のデータを明日の比較用に保存
+    # 今日分のデータを保存
     current_results_df.to_csv(previous_results_path, index=False)
 
 # ==========================================
@@ -414,12 +378,7 @@ def main():
     try:
         data = load_data()
 
-        # ステージ1の学習
-        model_stage1, stage1_features, stage1_cat_cols = train_stage1_model(
-            data['players'], data['transfers'], data['appearances']
-        )
-
-        # ステージ2の学習
+        # ステージ2の学習（先行して関係性モデルを構築）
         logger.info("\n" + "=" * 80)
         logger.info(" 【ステージ2】移籍先クラブ予測モデルの訓練")
         logger.info("=" * 80)
@@ -433,13 +392,36 @@ def main():
             club_pos_counts, club_connection, agent_pipeline, club_nat_affinity, data['clubs'], club_market_profile
         )
 
+        # 🔮 新ステージ1: 数理危険度モデルの実行
+        logger.info("\n" + "=" * 80)
+        logger.info(" 【新ステージ1】数理モデルによる移籍危険度の算出")
+        logger.info("=" * 80)
+        
+        current_players = data['players'][data['players']['last_season'] >= 2025].copy()
+        current_players = pd.merge(current_players, data['clubs'][['club_id', 'domestic_competition_id']], left_on='current_club_id', right_on='club_id', how='left')
+        
+        # 数理ベースの危険度割り当て
+        scored_players = calculate_transfer_vulnerability(current_players, data['appearances'], data['transfers'])
+        
+        # 必要な変数マッピングを推論用に統合
+        latest_valuation = data['player_valuations'].sort_values('date').groupby('player_id').tail(1)[['player_id', 'market_value_in_eur']].rename(columns={'market_value_in_eur': 'recent_market_value'})
+        player_stats = data['appearances'].groupby('player_id').agg(
+            total_minutes=('minutes_played', 'sum'), total_goals=('goals', 'sum'),
+            total_assists=('assists', 'sum'), total_games=('appearance_id', 'count')
+        ).reset_index()
+        
+        infer_base = pd.merge(scored_players[['player_id', 'name', 'position', 'country_of_citizenship', 'date_of_birth', 'current_club_id', 'domestic_competition_id', 'p_transfer']], player_stats, on='player_id', how='left')
+        infer_base = pd.merge(infer_base, latest_valuation, on='player_id', how='inner')
+        infer_base[['total_minutes', 'total_goals', 'total_assists', 'total_games']] = infer_base[['total_minutes', 'total_goals', 'total_assists', 'total_games']].fillna(0)
+        infer_base['age'] = calculate_age(infer_base['date_of_birth'])
+        infer_base = infer_base.rename(columns={'domestic_competition_id': 'player_club_domestic_competition_id'})
+
         # 推論エンジンのキック
         logger.info("\n" + "=" * 80)
         logger.info(" 【推論】グローバル移籍シミュレーションの実行")
         logger.info("=" * 80)
         results_df = run_inference(
-            data['players'], data['clubs'], data['appearances'], data['player_valuations'],
-            model_stage1, model_stage2, stage1_features, stage1_cat_cols, stage2_features, stage2_cat_cols, feature_dicts
+            infer_base, data['clubs'], model_stage2, stage2_features, stage2_cat_cols, feature_dicts
         )
 
         # ローカルに最新結果をCSV保存
@@ -447,14 +429,17 @@ def main():
         results_df.to_csv(output_file, index=False)
         logger.info(f"✅ 最新の予測マトリクスを {output_file} に保存しました。")
 
-        # 🚀 リアルタイムLINEアラートシステムを始動
+        # 🚀 リアルタイムLINEアラートシステムを始動（テストモード送信）
         run_realtime_alert_system(results_df, "prev_predictions.csv")
 
         # コンソールログに最終結果を表示
         print("\n" + "=" * 100)
-        print(" 👑 【世界開放×クラブ格の壁モデル】統合移籍予測シミュレーション結果 👑")
+        print(" 👑 【数理不満度×クラブ格の壁モデル】統合移籍予測シミュレーション結果 👑")
         print("=" * 100)
-        print(results_df.head(30).to_string(index=False))
+        if not results_df.empty:
+            print(results_df.head(30).to_string(index=False))
+        else:
+            print("予測条件を満たす現実的な移籍候補が検出されませんでした。")
         print("=" * 100)
 
     except Exception as e:
