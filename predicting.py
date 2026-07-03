@@ -100,10 +100,10 @@ def create_feature_dicts(df_club_pos_counts, df_club_connection, df_agent_pipeli
     }
 
 # ==========================================
-# 3. 新・ステージ1: 数理危険度スコア算出関数（正解ラベルなし）
+# 3. 新・ステージ1: 数理危険度スコア算出関数（リアル力学完全版）
 # ==========================================
 def calculate_transfer_vulnerability(players_df, appearances_df, transfers_df):
-    logger.info("🔮 数理モデルに基づき、全現役選手の移籍危険度スコアを算出中...")
+    logger.info("🔮 契約満了年・個人昇格力学を内蔵した数理モデルで、移籍危険度を算出中...")
     
     # 全選手の出場時間を集計
     player_stats = appearances_df.groupby('player_id').agg(
@@ -111,23 +111,50 @@ def calculate_transfer_vulnerability(players_df, appearances_df, transfers_df):
         total_games=('appearance_id', 'count')
     ).reset_index()
     
+    # クラブごとの平均市場価値を算出（個人昇格の判定用）
+    club_avg_value = players_df.groupby('current_club_id')['market_value_in_eur'].mean().reset_index(name='club_avg_player_value')
+    
+    # データの結合
     df = pd.merge(players_df, player_stats, on='player_id', how='left').fillna(0)
+    df = pd.merge(df, club_avg_value, on='current_club_id', how='left').fillna(1)
+    
     df['age'] = calculate_age(df['date_of_birth'])
     
-    # サッカービジネスの力学を数式化
-    market_attraction = np.log1p(df['market_value_in_eur']) # 市場価値の引力をなめらかに
-    playing_dissatisfaction = 1.0 / (df['total_minutes'] + 100) # 出場時間が短いほど不満大
-    age_factor = np.exp(-((df['age'] - 24) ** 2) / 50) # 22〜26歳のステップアップ適齢期を優遇
+    # --- 📊 各種力学コンポーネントの計算 ---
     
-    base_score = market_attraction * playing_dissatisfaction * age_factor
-    df['p_transfer_score'] = base_score
+    # 1. 市場価値のベース引力（対数でなめらかに）
+    market_attraction = np.log1p(df['market_value_in_eur'])
     
-    # 🌟 あなたのアイデアを完全具現化：直近1年以内に移籍した選手への「禁欲期間ペナルティ」
-    # 直近の移籍確定日（2025年7月1日以降）がある選手をリスト化
+    # 2. 出場時間による不満度（極端な跳ね上がりを抑える対数仕様）
+    playing_dissatisfaction = np.log1p(10000 / (df['total_minutes'] + 100))
+    
+    # 3. 年齢適性フィルタ（22〜26歳をピークにする）
+    age_factor = np.exp(-((df['age'] - 24) ** 2) / 50)
+    
+    # 4. 🌟【追加】契約残年数による爆発力 (2026年基準)
+    # 契約満了年が入っていない場合はデフォルトで3年残りと仮定
+    df['contract_expiration_year'] = pd.to_numeric(df['contract_expiration_year'], errors='coerce').fillna(2029)
+    df['years_left'] = df['contract_expiration_year'] - 2026
+    
+    # 残り0年以下（今すぐ満了）は3.0倍、残り1年は2.0倍、2年は1.2倍、それ以上はペナルティ
+    contract_factor = np.where(df['years_left'] <= 0, 3.0,
+                       np.where(df['years_left'] == 1, 2.0,
+                       np.where(df['years_left'] == 2, 1.2, 0.5)))
+    
+    # 5. 🌟【追加】個人昇格のポテンシャル (チームの平均よりどれだけ突出しているか)
+    # チーム平均の何倍の価値があるか（上限5倍で頭打ち）
+    df['value_ratio_to_club'] = np.minimum(safe_divide(df['market_value_in_eur'], df['club_avg_player_value']), 5.0)
+    # 際立っている選手ほどスコアを乗算（1.0倍〜2.0倍のブースト）
+    individual_promotion_factor = 1.0 + (df['value_ratio_to_club'] / 5.0)
+
+    # --- 🚀 総合危険度スコアの結合 ---
+    df['p_transfer_score'] = market_attraction * playing_dissatisfaction * age_factor * contract_factor * individual_promotion_factor
+    
+    # 6. 直近移籍ペナルティ
     recent_moved_players = transfers_df[transfers_df['transfer_date'] >= '2025-07-01']['player_id'].unique()
     df['p_transfer_score'] = np.where(df['player_id'].isin(recent_moved_players), df['p_transfer_score'] * 0.1, df['p_transfer_score'])
     
-    # 0〜1の範囲に綺麗に正規化して確率プロキシとする
+    # 0〜1の範囲に綺麗に正規化
     min_s, max_s = df['p_transfer_score'].min(), df['p_transfer_score'].max()
     if max_s - min_s > 0:
         df['p_transfer'] = (df['p_transfer_score'] - min_s) / (max_s - min_s)
