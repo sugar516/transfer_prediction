@@ -295,8 +295,22 @@ def run_inference(infer_base_with_p, clubs_df, model_stage2, stage2_features, st
         for col in stage2_cat_cols:
             X2_infer[col] = X2_infer[col].astype('category')
 
+        # LightGBMの生の予測確率を取得
         raw_scores = model_stage2.predict_proba(X2_infer)[:, 1]
-        exp_scores = np.exp(raw_scores * SCORE_TEMPERATURE)
+        
+        # 理想的な移籍は「status_gap = 1.0 (同格)」または「1.5〜3.0倍 (ステップアップ)」です。
+        # 格差が離れるほど（0.2倍の格下や、5倍以上の高すぎる壁）、指数関数的に引力を減衰させます。
+        gaps = cand_df['club_status_gap'].values
+        
+        # 同格(1.0)〜少し上のクラブ(1.5)あたりをピークにした引力補正係数
+        # 格差ギャップが離れるほどペナルティが強くなります
+        gap_penalty = np.exp(-((gaps - 1.2) ** 2) / 0.5) 
+        
+        # 生スコアにペナルティを掛け算して、現実的な引力に補正
+        corrected_scores = raw_scores * gap_penalty
+        
+        # ソフトマックス関数で確率に変換
+        exp_scores = np.exp(corrected_scores * SCORE_TEMPERATURE)
         p_destination = exp_scores / exp_scores.sum()
 
         cand_df['p_destination'] = p_destination
