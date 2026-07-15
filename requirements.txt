@@ -4,3 +4,5 @@ scikit-learn
 lightgbm
 requests
 kagglehub
+gspread
+google-auth
