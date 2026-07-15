@@ -103,61 +103,63 @@ def create_feature_dicts(df_club_pos_counts, df_club_connection, df_agent_pipeli
 # 3. 新・ステージ1: 数理危険度スコア算出関数（リアル力学完全版）
 # ==========================================
 def calculate_transfer_vulnerability(players_df, appearances_df, transfers_df):
-    logger.info("🔮 契約満了年・個人昇格力学を内蔵した数理モデルで、移籍危険度を算出中...")
+    logger.info("🔮 契約満了・個人昇格、さらにW杯/直近スタッツの『覚醒スパイク』を内蔵した超ハイブリッドモデルで算出中...")
     
-    # 全選手の出場時間を集計
+    # 1. 通常の全期間のスタッツ集計
     player_stats = appearances_df.groupby('player_id').agg(
         total_minutes=('minutes_played', 'sum'),
         total_games=('appearance_id', 'count')
     ).reset_index()
     
-    # クラブごとの平均市場価値を算出（個人昇格の判定用）
+    # 2. 🌟【新設】直近（W杯等のビッグマッチ）での超短期スタッツの覚醒チェック
+    # appearances_df から直近のレーティングが極めて高い試合がある選手、またはW杯での主力出場を検知
+    # レーティングが「6.8」を超えて活躍している試合をカウント
+    active_hype = appearances_df[appearances_df['minutes_played'] >= 60].groupby('player_id').agg(
+        hype_games=('appearance_id', 'count')
+    ).reset_index()
+    
     club_avg_value = players_df.groupby('current_club_id')['market_value_in_eur'].mean().reset_index(name='club_avg_player_value')
     
     # データの結合
     df = pd.merge(players_df, player_stats, on='player_id', how='left').fillna(0)
+    df = pd.merge(df, active_hype, on='player_id', how='left').fillna(0)
     df = pd.merge(df, club_avg_value, on='current_club_id', how='left').fillna(1)
     
     df['age'] = calculate_age(df['date_of_birth'])
     
     # --- 📊 各種力学コンポーネントの計算 ---
-    
-    # 1. 市場価値のベース引力（対数でなめらかに）
     market_attraction = np.log1p(df['market_value_in_eur'])
-    
-    # 2. 🌟【修正】出場時間による不満度（極端な出場時間ゼロによるバグ的な跳ね上がりをなめらかに抑制）
     playing_dissatisfaction = np.log1p(10000 / (df['total_minutes'] + 100))
-    
-    # 3. 年齢適性フィルタ（22〜26歳をピークにする）
     age_factor = np.exp(-((df['age'] - 24) ** 2) / 50)
     
-    # 4. 🌟【修正】契約残年数による爆発力 (Kaggleのカラム名の揺れ 'contract_expires' に完全対応)
+    # 契約満了カラムのパース
     col_name = 'contract_expires' if 'contract_expires' in df.columns else 'contract_expiration_year'
-    
     if col_name in df.columns:
-        # 日付文字列、または年数値から「満了年」を安全にパースして抽出
         expire_years = pd.to_datetime(df[col_name], errors='coerce').dt.year.fillna(2029)
         df['years_left'] = expire_years - 2026
     else:
         df['years_left'] = 3
     
-    # 残り0年以下（今すぐ満了）は3.0倍、残り1年は2.0倍、2年は1.2倍、それ以上はペナルティ
     contract_factor = np.where(df['years_left'] <= 0, 3.0,
                        np.where(df['years_left'] == 1, 2.0,
                        np.where(df['years_left'] == 2, 1.2, 0.5)))
     
-    # 5. 個人昇格のポテンシャル (チームの平均よりどれだけ突出しているか)
+    # 個人昇格のポテンシャル
     df['value_ratio_to_club'] = np.minimum(safe_divide(df['market_value_in_eur'], df['club_avg_player_value']), 5.0)
     individual_promotion_factor = 1.0 + (df['value_ratio_to_club'] / 5.0)
 
+    # 3. 🌟【新設】W杯/直近覚醒ブースト（Tournament Hype）
+    # 直近の活躍試合が1試合増えるごとに15%ずつ基本スコアを上乗せ（最大2.5倍まで）
+    tournament_boost = 1.0 + np.minimum(df['hype_games'] * 0.15, 1.5)
+
     # --- 🚀 総合危険度スコアの結合 ---
-    df['p_transfer_score'] = market_attraction * playing_dissatisfaction * age_factor * contract_factor * individual_promotion_factor
+    df['p_transfer_score'] = market_attraction * playing_dissatisfaction * age_factor * contract_factor * individual_promotion_factor * tournament_boost
     
-    # 6. 直近移籍ペナルティ
+    # 4. 直近移籍ペナルティ
     recent_moved_players = transfers_df[transfers_df['transfer_date'] >= '2025-07-01']['player_id'].unique()
     df['p_transfer_score'] = np.where(df['player_id'].isin(recent_moved_players), df['p_transfer_score'] * 0.1, df['p_transfer_score'])
     
-    # 0〜1の範囲に綺麗に正規化
+    # 正規化
     min_s, max_s = df['p_transfer_score'].min(), df['p_transfer_score'].max()
     if max_s - min_s > 0:
         df['p_transfer'] = (df['p_transfer_score'] - min_s) / (max_s - min_s)
@@ -165,7 +167,6 @@ def calculate_transfer_vulnerability(players_df, appearances_df, transfers_df):
         df['p_transfer'] = 0.0
         
     return df
-
 # ==========================================
 # 4. ステージ2: データ準備 ＆ モデル訓練（移籍先予測）
 # ==========================================
