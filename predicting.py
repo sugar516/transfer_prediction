@@ -481,7 +481,7 @@ def main():
     # 🌟 【新設】Googleスプレッドシートへのデータ同期
     # ==========================================
     gcp_key_json = os.environ.get("GCP_SERVICE_ACCOUNT_KEY")
-    spreadsheet_id = "あなたのスプレッドシートID"  # 👈 さっきメモしたIDをここに直接貼る
+    spreadsheet_id = "1od-Sf6CL4viaLHQN7BcDHgg7R5Ffu9uwhC6IrSC7FZA"  # 👈 さっきメモしたIDをここに直接貼る
 
     if gcp_key_json and spreadsheet_id:
         logger.info("📊 Googleスプレッドシートへ最新データを同期中...")
