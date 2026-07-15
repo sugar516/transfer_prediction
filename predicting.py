@@ -477,5 +477,41 @@ def main():
         logger.error(f"❌ パイプライン実行に致命的なエラーが発生しました: {e}", exc_info=True)
         raise
 
+    # ==========================================
+    # 🌟 【新設】Googleスプレッドシートへのデータ同期
+    # ==========================================
+    gcp_key_json = os.environ.get("GCP_SERVICE_ACCOUNT_KEY")
+    spreadsheet_id = "あなたのスプレッドシートID"  # 👈 さっきメモしたIDをここに直接貼る
+
+    if gcp_key_json and spreadsheet_id:
+        logger.info("📊 Googleスプレッドシートへ最新データを同期中...")
+        try:
+            import gspread
+            from google.oauth2.service_account import Credentials
+            
+            # 認証
+            scopes = [
+                'https://www.googleapis.com/auth/spreadsheets',
+                'https://www.googleapis.com/auth/drive'
+            ]
+            creds = Credentials.from_service_account_info(json.loads(gcp_key_json), scopes=scopes)
+            gc = gspread.authorize(creds)
+            
+            # スプレッドシートをIDで開く
+            sh = gc.open_by_key(spreadsheet_id)
+            worksheet = sh.get_worksheet(0) # Sheet1
+            
+            # スプレッドシートをクリアして、ヘッダー + 最新データをまるごと書き込み
+            worksheet.clear()
+            
+            # スプレッドシートへの書き込み用にデータを整形 (NaNは空文字に置換)
+            export_data = results_df.fillna("").values.tolist()
+            headers = results_df.columns.tolist()
+            
+            worksheet.update('A1', [headers] + export_data)
+            logger.info("✅ スプレッドシートへのデータ同期が100%完了しました！")
+        except Exception as sheet_err:
+            logger.error(f"❌ スプレッドシート書き込み中にエラーが発生しました: {sheet_err}", exc_info=True)
+
 if __name__ == "__main__":
     main()
