@@ -21,9 +21,21 @@ jobs:
     - name: Install Dependencies
       run: |
         python -m pip install --upgrade pip
+        # Kaggle CLIのインストールを追加
+        pip install kaggle
         pip install -r requirements.txt
 
-    # 🌟 エラーの原因だった working-directory を削除し、直下のファイルを直接実行
+    # 🌟 【新設】Kaggleから最新のTransfermarktデータを自動でストリーミングダウンロードするステップ
+    - name: Download latest Transfermarkt data from Kaggle
+      env:
+        KAGGLE_USERNAME: ${{ secrets.KAGGLE_USERNAME }}
+        KAGGLE_KEY: ${{ secrets.KAGGLE_KEY }}
+      run: |
+        # Kaggleのデータセット（davidcariboo/player-scores）を、Pythonプログラムが読み込める場所にキャッシュ
+        # ※ kagglehubが内部で使用するキャッシュパス（~/.cache/kagglehub）に直接ダウンロード・展開を行います
+        python -c "import kagglehub; kagglehub.dataset_download('davidcariboo/player-scores')"
+
+    # 🌟 予測パイプラインの実行（スプレッドシート書き込み用の環境変数もバインド）
     - name: Run Prediction
       env:
         LINE_ACCESS_TOKEN: ${{ secrets.LINE_ACCESS_TOKEN }}
